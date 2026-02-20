@@ -1,0 +1,106 @@
+:root {
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: #1b1f24;
+  background: #f5f7fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e1e5ea;
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.nav {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.nav a,
+.nav button {
+  background: #0f172a;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  padding: 10px;
+}
+
+textarea {
+  min-height: 120px;
+}
+
+.row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.status {
+  min-height: 20px;
+  margin-top: 8px;
+}
+
+.ok {
+  color: #0b7d35;
+}
+
+.error {
+  color: #b42318;
+}
+
+.panel {
+  border: 1px solid #e1e5ea;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 14px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.media-preview {
+  max-width: 100%;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+}
+
+@media (max-width: 700px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}

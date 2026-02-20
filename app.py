@@ -13,7 +13,7 @@ from secrets import randbelow, token_urlsafe
 from typing import Deque
 
 from dotenv import load_dotenv
-from flask import Flask, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, g, jsonify, request, send_from_directory, session
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, scoped_session, sessionmaker
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -110,6 +110,7 @@ app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "false"
 
 rate_limit_lock = threading.Lock()
 rate_limit_cache: dict[str, Deque[float]] = defaultdict(deque)
+FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 
 def init_db() -> None:
@@ -172,7 +173,9 @@ def login_required(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
         if not logged_in_user_id():
-            return redirect(url_for("login", next=request.path))
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required."}), 401
+            return jsonify({"error": "Authentication required."}), 401
         return view_func(*args, **kwargs)
 
     return wrapped
@@ -180,6 +183,10 @@ def login_required(view_func):
 
 def secret_not_available_message() -> tuple[dict[str, str], int]:
     return {"error": "Content is unavailable (expired, viewed, or not found)."}, 404
+
+
+def user_to_dict(user: User) -> dict[str, str | int]:
+    return {"id": user.id, "name": user.name, "email": user.email}
 
 
 def send_reset_email(recipient_email: str, code: str) -> tuple[bool, str | None]:
@@ -268,48 +275,47 @@ def set_security_headers(response):
     return response
 
 
-@app.route("/")
-@login_required
-def home():
-    return render_template("index.html", max_upload_mb=MAX_UPLOAD_BYTES // (1024 * 1024))
-
-
-@app.route("/secret/<secret_id>")
-def secret_page(secret_id: str):
-    return render_template("secret.html", secret_id=secret_id)
-
-
-@app.route("/about")
-def about():
-    return render_template("about.html")
-
-
 @app.route("/healthz")
 def healthz():
     return jsonify({"status": "ok", "time_utc": utc_now().isoformat()})
 
 
-@app.route("/signup", methods=["GET", "POST"])
-def signup():
-    if request.method == "GET":
-        return render_template("signup.html")
+@app.get("/api/auth/me")
+def me():
+    user_id = logged_in_user_id()
+    if not user_id:
+        return jsonify({"authenticated": False, "user": None})
 
-    name = (request.form.get("name") or "").strip()
-    email = (request.form.get("email") or "").strip().lower()
-    password = request.form.get("password") or ""
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if not user:
+            session.clear()
+            return jsonify({"authenticated": False, "user": None})
+        return jsonify({"authenticated": True, "user": user_to_dict(user)})
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/signup")
+def signup():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    email = str(payload.get("email") or "").strip().lower()
+    password = str(payload.get("password") or "")
 
     if len(name) < 2:
-        return render_template("signup.html", error="Name is too short.")
+        return jsonify({"error": "Name is too short."}), 400
     if "@" not in email or "." not in email:
-        return render_template("signup.html", error="Enter a valid email address.")
+        return jsonify({"error": "Enter a valid email address."}), 400
     if len(password) < 8:
-        return render_template("signup.html", error="Password must be at least 8 characters.")
+        return jsonify({"error": "Password must be at least 8 characters."}), 400
 
     db = SessionLocal()
     try:
         existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
         if existing:
-            return render_template("signup.html", error="Email already registered.")
+            return jsonify({"error": "Email already registered."}), 409
 
         user = User(
             name=name,
@@ -321,19 +327,16 @@ def signup():
         db.commit()
         db.refresh(user)
         session["user_id"] = user.id
+        return jsonify({"message": "Account created.", "user": user_to_dict(user)}), 201
     finally:
         db.close()
 
-    return redirect(url_for("home"))
 
-
-@app.route("/login", methods=["GET", "POST"])
+@app.post("/api/auth/login")
 def login():
-    if request.method == "GET":
-        return render_template("login.html")
-
-    email = (request.form.get("email") or "").strip().lower()
-    password = request.form.get("password") or ""
+    payload = request.get_json(silent=True) or {}
+    email = str(payload.get("email") or "").strip().lower()
+    password = str(payload.get("password") or "")
 
     db = SessionLocal()
     try:
@@ -342,35 +345,31 @@ def login():
         db.close()
 
     if not user or not check_password_hash(user.password_hash, password):
-        return render_template("login.html", error="Invalid credentials.")
+        return jsonify({"error": "Invalid credentials."}), 401
 
     session["user_id"] = user.id
-    next_path = request.args.get("next")
-    if next_path and next_path.startswith("/"):
-        return redirect(next_path)
-    return redirect(url_for("home"))
+    return jsonify({"message": "Logged in.", "user": user_to_dict(user)})
 
 
-@app.post("/logout")
+@app.post("/api/auth/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return jsonify({"logged_out": True})
 
 
-@app.route("/forgot-password", methods=["GET", "POST"])
+@app.post("/api/auth/forgot-password")
 def forgot_password():
-    if request.method == "GET":
-        return render_template("forgot_password.html")
+    payload = request.get_json(silent=True) or {}
+    email = str(payload.get("email") or "").strip().lower()
 
-    email = (request.form.get("email") or "").strip().lower()
     if "@" not in email or "." not in email:
-        return render_template("forgot_password.html", error="Enter a valid email address.")
+        return jsonify({"error": "Enter a valid email address."}), 400
 
     db = SessionLocal()
     try:
         user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
         if not user:
-            return render_template("forgot_password.html", error="No account found for this email.")
+            return jsonify({"error": "No account found for this email."}), 404
 
         code = generate_six_digit_code()
         salt = token_urlsafe(8)
@@ -398,45 +397,41 @@ def forgot_password():
     sent, error_message = send_reset_email(email, code)
     show_code = os.getenv("MAIL_MODE", "console").strip().lower() == "console"
     if not sent:
-        return render_template(
-            "forgot_password.html",
-            error=f"Failed to send reset code: {error_message}",
-        )
-    return render_template(
-        "forgot_password.html",
-        notice="Reset code sent. Check your email inbox.",
-        reset_code=code if show_code else None,
-        email=email,
+        return jsonify({"error": f"Failed to send reset code: {error_message}"}), 500
+    return jsonify(
+        {
+            "message": "Reset code sent. Check your email inbox.",
+            "email": email,
+            "reset_code": code if show_code else None,
+        }
     )
 
 
-@app.route("/reset-password", methods=["GET", "POST"])
+@app.post("/api/auth/reset-password")
 def reset_password():
-    if request.method == "GET":
-        return render_template("reset_password.html")
-
-    email = (request.form.get("email") or "").strip().lower()
-    code = (request.form.get("code") or "").strip()
-    new_password = request.form.get("new_password") or ""
+    payload = request.get_json(silent=True) or {}
+    email = str(payload.get("email") or "").strip().lower()
+    code = str(payload.get("code") or "").strip()
+    new_password = str(payload.get("new_password") or "")
 
     if len(new_password) < 8:
-        return render_template("reset_password.html", error="New password must be at least 8 characters.")
+        return jsonify({"error": "New password must be at least 8 characters."}), 400
     if len(code) != 6 or not code.isdigit():
-        return render_template("reset_password.html", error="Code must be a 6-digit value.")
+        return jsonify({"error": "Code must be a 6-digit value."}), 400
 
     db = SessionLocal()
     try:
         reset_row = db.get(PasswordResetCode, email)
         if not reset_row or reset_row.expires_at <= utc_now():
-            return render_template("reset_password.html", error="Reset code is invalid or expired.")
+            return jsonify({"error": "Reset code is invalid or expired."}), 400
 
         expected_hash = make_code_hash(code, reset_row.code_salt)
         if expected_hash != reset_row.code_hash:
-            return render_template("reset_password.html", error="Reset code is invalid.")
+            return jsonify({"error": "Reset code is invalid."}), 400
 
         user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
         if not user:
-            return render_template("reset_password.html", error="No account found for this email.")
+            return jsonify({"error": "No account found for this email."}), 404
 
         user.password_hash = generate_password_hash(new_password)
         db.delete(reset_row)
@@ -444,7 +439,7 @@ def reset_password():
     finally:
         db.close()
 
-    return render_template("login.html", notice="Password reset successful. Please log in.")
+    return jsonify({"message": "Password reset successful. Please log in."})
 
 
 @app.post("/api/secrets")
@@ -600,14 +595,37 @@ def delete_secret(secret_id: str):
 def not_found(_):
     if request.path.startswith("/api/"):
         return jsonify({"error": "Not found"}), 404
-    return render_template("not_found.html"), 404
+    if FRONTEND_DIST_DIR.exists():
+        return send_from_directory(FRONTEND_DIST_DIR, "index.html"), 200
+    return jsonify({"error": "Not found", "hint": "Build frontend/dist or run React dev server."}), 404
 
 
 @app.errorhandler(500)
 def internal_error(_):
     if request.path.startswith("/api/"):
         return jsonify({"error": "Internal server error"}), 500
-    return render_template("server_error.html"), 500
+    return jsonify({"error": "Internal server error"}), 500
+
+
+@app.get("/", defaults={"path": ""})
+@app.get("/<path:path>")
+def serve_spa(path: str):
+    if path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+
+    if FRONTEND_DIST_DIR.exists():
+        candidate = FRONTEND_DIST_DIR / path
+        if path and candidate.is_file():
+            return send_from_directory(FRONTEND_DIST_DIR, path)
+        return send_from_directory(FRONTEND_DIST_DIR, "index.html")
+
+    return jsonify(
+        {
+            "message": "SecureShield backend is running.",
+            "next_step": "Start the React frontend (frontend/) or build it into frontend/dist.",
+            "api_base": "/api",
+        }
+    )
 
 
 init_db()

@@ -1,101 +1,83 @@
 # SecureShield
 
-SecureShield is a one-time secure sharing web app for safely sending credentials and sensitive content.
-It is designed for day-to-day operational sharing (API keys, temporary passwords, photos, and videos).
+SecureShield now uses:
+- React (Vite) for the frontend
+- Python (Flask + SQLAlchemy) for the backend API
 
-## Core Features
+It provides encrypted one-time/limited-view sharing for text, images, and videos.
 
-- Client-side encryption with Web Crypto (AES-GCM)
-- Server stores ciphertext only (no plaintext storage)
-- Login, signup, forgot-password, and reset-password pages
-- One-time or limited-view retrieval
-- Mandatory 6-digit access code per share
-- Auto-expiration (30 min to 7 days configurable in UI)
-- Manual revoke support via delete token
-- Basic rate limiting and security headers (CSP, no-sniff, no-store)
-- Clean and responsive UI for desktop/mobile
+## Architecture
 
-## How It Works
+- `app.py`: Flask backend API, sessions, DB models, secret lifecycle
+- `frontend/`: React SPA (auth + create + reveal flows)
+- `data/secureshield.db`: local SQLite DB (when `DATABASE_URL` is not set)
 
-1. Authenticated user logs in and creates a share (text/photo/video).
-2. Browser encrypts content with a random AES key.
-3. Ciphertext is sent to server and stored in the database (SQLite local, PostgreSQL in production).
-4. Share link is generated as:
-   `/secret/<id>#k=<decryption-key>`
-5. A 6-digit access code is generated for that share.
-6. Recipient opens link, enters code, browser decrypts locally, and content is consumed per view policy.
+## Backend API
 
-The key in URL fragment (`#...`) is not sent to the server in HTTP requests.
+Auth:
+- `GET /api/auth/me`
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
 
-## Project Structure
+Secrets:
+- `POST /api/secrets`
+- `GET /api/secrets/<secret_id>?code=<6-digit-code>`
+- `DELETE /api/secrets/<secret_id>?token=<delete_token>`
 
-- `app.py` Flask app with HTML routes + JSON API
-- `templates/` UI templates
-- `static/js/create.js` client-side encryption + create flow
-- `static/js/reveal.js` fetch + client-side decryption flow
-- `static/css/app.css` visual system and responsive styling
-- `.env.example` environment variable template
-- `data/secureshield.db` local SQLite database (auto-created when `DATABASE_URL` is not set)
+Health:
+- `GET /healthz`
 
 ## Local Development
 
+### 1. Start Python backend
+
 ```powershell
+cd SecureShield
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python app.py
 ```
 
-Open `http://127.0.0.1:5000`.
+Backend runs at `http://127.0.0.1:5000`.
 
-For local password reset testing, keep `MAIL_MODE=console` and check terminal logs for the 6-digit reset code.
+### 2. Start React frontend
 
-## API Endpoints
+```powershell
+cd SecureShield\frontend
+npm install
+npm run dev
+```
 
-- `POST /api/secrets`
-- `GET /api/secrets/<secret_id>`
-- `DELETE /api/secrets/<secret_id>?token=<delete_token>`
-- `GET /healthz`
+Frontend runs at `http://127.0.0.1:5173` and proxies `/api` to backend.
 
-## Production Setup (Render + Vercel)
+## Production Build
 
-### 1. Database (Render PostgreSQL)
+Build frontend:
 
-- Create a Render PostgreSQL instance.
-- Copy its external database URL.
-- Set `DATABASE_URL` in Render web service env vars.
-- Use psycopg format:
-  `postgresql+psycopg://...`
+```powershell
+cd SecureShield\frontend
+npm install
+npm run build
+```
 
-### 2. Render Backend Deployment
+This generates `frontend/dist`. Flask serves this build automatically for non-API routes.
 
-- Create Render Web Service from this repo.
-- Build command:
-  `pip install -r requirements.txt`
-- Start command:
-  `gunicorn -w 2 -b 0.0.0.0:$PORT app:app`
-- Set env vars:
-  - `SECRET_KEY` (required)
-  - `SESSION_COOKIE_SECURE=true`
-  - `DATABASE_URL` (Render Postgres URL)
-  - `MAIL_MODE=smtp`
-  - `MAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS=true`
+## Environment Variables
 
-### 3. Vercel Frontend Strategy
+See `.env.example`.
 
-Use Vercel for your portfolio site/landing page, and link the app hosted on Render.
-If you later split frontend/backend, Vercel can host frontend and call Render API.
+Important:
+- `SECRET_KEY`
+- `SESSION_COOKIE_SECURE`
+- `DATABASE_URL` (optional locally, required in production Postgres setups)
+- SMTP variables when using `MAIL_MODE=smtp`
 
-### 4. SMTP Requirement
+## Notes
 
-Forgot-password is production-ready with SMTP.
-Use a mail provider (Gmail App Password, Brevo, SendGrid SMTP, etc.) and set SMTP env vars on Render.
-
-## Security Caveat
-
-This MVP improves sharing safety significantly versus plain text channels, but for high-compliance environments you should add:
-
-- strict CSRF strategy and origin policy hardening
-- stronger rate limits with Redis-backed counters
-- abuse detection, audit events, and secret scanning controls
-- external KMS-backed server-side controls and key rotation policies
+- Client-side AES-GCM encryption is done in React before upload.
+- Backend stores ciphertext only.
+- Decryption key stays in the URL fragment (`#k=...`) and is not sent to the server.

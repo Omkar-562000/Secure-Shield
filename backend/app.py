@@ -18,7 +18,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, creat
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, scoped_session, sessionmaker
 from werkzeug.security import check_password_hash, generate_password_hash
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -110,7 +110,7 @@ app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "false"
 
 rate_limit_lock = threading.Lock()
 rate_limit_cache: dict[str, Deque[float]] = defaultdict(deque)
-FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
+FRONTEND_DIST_DIR = BASE_DIR.parent / "frontend" / "dist"
 
 
 def init_db() -> None:
@@ -440,6 +440,44 @@ def reset_password():
         db.close()
 
     return jsonify({"message": "Password reset successful. Please log in."})
+
+
+@app.get("/api/secrets")
+@login_required
+def list_my_secrets():
+    cleanup_expired()
+    user_id = logged_in_user_id()
+    if not user_id:
+        return jsonify({"error": "Authentication required."}), 401
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            select(Secret)
+            .where(Secret.owner_user_id == user_id)
+            .order_by(Secret.created_at.desc())
+        ).scalars().all()
+    finally:
+        db.close()
+
+    now = utc_now()
+    items = []
+    for row in rows:
+        if row.expires_at <= now or row.remaining_views <= 0:
+            continue
+        items.append(
+            {
+                "secret_id": row.id,
+                "content_kind": row.content_kind,
+                "filename": row.filename,
+                "created_at": row.created_at.isoformat(),
+                "expires_at": row.expires_at.isoformat(),
+                "remaining_views": row.remaining_views,
+                "revoke_url": f"/api/secrets/{row.id}?token={row.delete_token}",
+            }
+        )
+
+    return jsonify({"items": items})
 
 
 @app.post("/api/secrets")

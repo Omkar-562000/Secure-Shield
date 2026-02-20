@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}SecureShield | Error{% endblock %}
+{% block content %}
+<section class="auth-card">
+    <h1>Something Went Wrong</h1>
+    <p class="note">Please try again in a moment.</p>
+    <a class="button-link" href="{{ url_for('home') }}">Go Home</a>
+</section>
+{% endblock %}

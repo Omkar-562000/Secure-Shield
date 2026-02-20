@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}SecureShield | Not Found{% endblock %}
+{% block content %}
+<section class="auth-card">
+    <h1>Page Not Found</h1>
+    <p class="note">The page you requested does not exist.</p>
+    <a class="button-link" href="{{ url_for('home') }}">Go Home</a>
+</section>
+{% endblock %}

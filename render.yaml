@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: secureshield
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT app:app
+    plan: free
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SESSION_COOKIE_SECURE
+        value: true
+      - key: MAIL_MODE
+        value: smtp

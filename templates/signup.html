@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}SecureShield | Sign Up{% endblock %}
+{% block content %}
+<section class="auth-card">
+    <h1>Create Account</h1>
+    {% if error %}<p class="status error">{{ error }}</p>{% endif %}
+    <form method="post" class="form-grid">
+        <label for="name">Full name</label>
+        <input id="name" name="name" type="text" required>
+
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" minlength="8" required>
+
+        <button type="submit">Sign Up</button>
+    </form>
+    <p class="note">Already have an account? <a href="{{ url_for('login') }}">Login</a></p>
+</section>
+{% endblock %}
